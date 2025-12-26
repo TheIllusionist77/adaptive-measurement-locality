@@ -1,0 +1,68 @@
+# importing necessary libraries
+import pennylane as qml
+from pennylane import numpy as np
+
+def compute_subsystem_entropies(density_matrix, total_qubits):
+    """
+    Computes the Rényi-2 entropies for all adjacent two-qubit subsystems.
+    
+    :param density_matrix: The full density matrix.
+    :param total_qubits: Total number of qubits in the system.
+    """
+
+    entropies = {}
+
+    for i in range(total_qubits - 1):
+        subsystem = (i, i + 1)
+        rho = qml.math.reduce_dm(density_matrix, indices=list(subsystem))
+
+        purity = np.trace(rho @ rho).real
+        purity = np.clip(purity, 0.0, 1.0)
+
+        entropies[subsystem] = -np.log2(purity)
+
+    return entropies
+
+def compute_diagnostics(grad, density_matrix, total_qubits):
+    """
+    Computes various diagnostics for the optimization process.
+    
+    :param grad: The gradient array.
+    :param density_matrix: The full density matrix.
+    :param total_qubits: Total number of qubits in the system.
+    """
+
+    entropies = compute_subsystem_entropies(density_matrix, total_qubits)
+
+    gradient_norm = float(np.linalg.norm(grad))
+    gradient_std = float(np.std(grad))
+
+    if gradient_std > 1e-10:
+        gradient_snr = gradient_norm / gradient_std
+    else:
+        gradient_snr = float("inf") if gradient_norm > 1e-10 else 0.0
+
+    diagnostics = {
+        "gradient_snr": gradient_snr,
+        "gradient_norm": gradient_norm,
+        "gradient_std": gradient_std,
+        "gradient_max": float(np.max(np.abs(grad))),
+        "subsystem_entropies": entropies,
+        "avg_entropy": float(np.mean(list(entropies.values()))),
+        "max_entropy": float(np.max(list(entropies.values())))
+    }
+
+    return diagnostics
+
+def get_diagnostics(data, step):
+    """
+    Formats diagnostics information for logging.
+    
+    :param data: The dictionary containing diagnostics data.
+    :param step: The current optimization step.
+    """
+
+    return (f"[Diagnostics] SNR = {data["gradient_snr"]:.2f}, "
+            f"Grad Norm: {data["gradient_norm"]:.6f}, "
+            f"Grad Std: {data["gradient_std"]:.6f}, "
+            f"Avg Entropy: {data["avg_entropy"]:.3f}")

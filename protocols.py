@@ -1,13 +1,14 @@
 # importing necessary libraries
 import pennylane as qml
-import time, config
+import time, config, diagnostics
 
 class GlobalProtocol:
     """
     A global protocol for optimizing quantum circuits.
     """
 
-    def __init__(self, training_cost, full_cost, learning_rate, max_steps, energy_threshold):
+    def __init__(self, training_cost, full_cost, learning_rate, max_steps, energy_threshold,
+                 density_matrix_circuit=None, qubits=None):
         """
         Initialize the global protocol with the given parameters.
         
@@ -16,6 +17,8 @@ class GlobalProtocol:
         :param learning_rate: The learning rate for the optimizer.
         :param max_steps: The maximum number of steps for the optimization.
         :param energy_threshold: The energy threshold for convergence.
+        :param density_matrix_circuit: The density matrix circuit for diagnostics.
+        :param qubits: The number of qubits in the system.
         """
 
         self.training_cost = training_cost
@@ -24,6 +27,8 @@ class GlobalProtocol:
         self.max_steps = max_steps
         self.energy_threshold = energy_threshold
         self.convergence_window = config.CONVERGENCE_WINDOW
+        self.density_matrix_circuit = density_matrix_circuit
+        self.qubits = qubits
 
     def get_step_info(self, step, train_energy, full_energy):
         """
@@ -41,15 +46,27 @@ class GlobalProtocol:
         Initialize the log dictionary to store optimization data.
         """
 
-        return {
+        log = {
             "step": [],
             "training_energy": [],
             "full_energy": [],
             "shots_used": [],
             "wall_time": []
         }
+
+        if self.density_matrix_circuit:
+            log.update({
+                "gradient_snr": [],
+                "gradient_norm": [],
+                "gradient_std": [],
+                "gradient_max": [],
+                "avg_entropy": [],
+                "max_entropy": []
+            })
+        
+        return log
     
-    def log_step(self, log, step, train_energy, full_energy, shots_used, wall_time):
+    def log_step(self, log, step, train_energy, full_energy, shots_used, wall_time, data=None):
         """
         Log the data for the current step.
         
@@ -59,6 +76,7 @@ class GlobalProtocol:
         :param full_energy: Full energy at the current step.
         :param shots_used: Number of shots used at the current step.
         :param wall_time: Wall time taken for the current step.
+        :param data: Diagnostics data for the current step.
         """
 
         log["step"].append(step)
@@ -66,6 +84,14 @@ class GlobalProtocol:
         log["full_energy"].append(full_energy)
         log["shots_used"].append(shots_used)
         log["wall_time"].append(wall_time)
+
+        if data:
+            log["gradient_snr"].append(data["gradient_snr"])
+            log["gradient_norm"].append(data["gradient_norm"])
+            log["gradient_std"].append(data["gradient_std"])
+            log["gradient_max"].append(data["gradient_max"])
+            log["avg_entropy"].append(data["avg_entropy"])
+            log["max_entropy"].append(data["max_entropy"])
 
     def get_final_results(self, theta, log, converged):
         """
@@ -104,8 +130,16 @@ class GlobalProtocol:
         initial_train = self.training_cost(theta)
         initial_full = self.full_cost(theta)
 
-        self.log_step(log, 0, initial_train, initial_full, 2 * config.SHOTS_PER_STEP, time.time() - step_start)
-        print(self.get_step_info(0, initial_train, initial_full))
+        if self.density_matrix_circuit:
+            grad = qml.grad(self.training_cost)(theta)
+            density_matrix = self.density_matrix_circuit(theta)
+            data = diagnostics.compute_diagnostics(grad, density_matrix, self.qubits)
+            self.log_step(log, 0, initial_train, initial_full, 2 * config.SHOTS_PER_STEP, time.time() - step_start, data)
+            print(self.get_step_info(0, initial_train, initial_full))
+            print(diagnostics.get_diagnostics(data, 0))
+        else:
+            self.log_step(log, 0, initial_train, initial_full, 2 * config.SHOTS_PER_STEP, time.time() - step_start)
+            print(self.get_step_info(0, initial_train, initial_full))
 
         # optimization loop
         converged = False
@@ -114,8 +148,16 @@ class GlobalProtocol:
             theta, train_energy = self.optimizer.step_and_cost(self.training_cost, theta)
             full_energy = self.full_cost(theta)
 
-            self.log_step(log, step, train_energy, full_energy, 2 * config.SHOTS_PER_STEP, time.time() - step_start)
-            print(self.get_step_info(step, train_energy, full_energy))
+            if self.density_matrix_circuit:
+                grad = qml.grad(self.training_cost)(theta)
+                density_matrix = self.density_matrix_circuit(theta)
+                data = diagnostics.compute_diagnostics(grad, density_matrix, self.qubits)
+                self.log_step(log, step, train_energy, full_energy, 2 * config.SHOTS_PER_STEP, time.time() - step_start, data)
+                print(self.get_step_info(step, train_energy, full_energy))
+                print(diagnostics.get_diagnostics(data, step))
+            else:
+                self.log_step(log, step, train_energy, full_energy, 2 * config.SHOTS_PER_STEP, time.time() - step_start)
+                print(self.get_step_info(step, train_energy, full_energy))
 
             if step >= self.convergence_window:
                 recent_energies = log["full_energy"][-self.convergence_window:]
@@ -133,14 +175,16 @@ class FixedKProtocol(GlobalProtocol):
     A fixed-k protocol for optimizing quantum circuits.
     """
 
-    def __init__(self, training_cost, full_cost, learning_rate, max_steps, energy_threshold, k):
+    def __init__(self, training_cost, full_cost, learning_rate, max_steps, energy_threshold, k,
+                 density_matrix_circuit=None, qubits=None):
         """
         Initialize the fixed-k protocol with the given parameters.
         
         :param k: The fixed locality parameter.
         """
 
-        super().__init__(training_cost, full_cost, learning_rate, max_steps, energy_threshold)
+        super().__init__(training_cost, full_cost, learning_rate, max_steps, energy_threshold,
+                         density_matrix_circuit, qubits)
         self.k = k
 
     def get_step_info(self, step, train_energy, full_energy):
@@ -159,12 +203,12 @@ class FixedKProtocol(GlobalProtocol):
         log["k"] = []
         return log
     
-    def log_step(self, log, step, train_energy, full_energy, shots_used, wall_time):
+    def log_step(self, log, step, train_energy, full_energy, shots_used, wall_time, data=None):
         """
         Override to log k in each step.
         """
 
-        super().log_step(log, step, train_energy, full_energy, shots_used, wall_time)
+        super().log_step(log, step, train_energy, full_energy, shots_used, wall_time, data)
         log["k"].append(self.k)
     
     def get_final_results(self, theta, log, converged):

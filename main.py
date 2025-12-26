@@ -34,9 +34,12 @@ def main():
     full_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth, k=None)
     theta = vqe_core.initialize_params(depth, qubits, config.SEED, config.INIT_SCALE)
 
+    density_matrix_circuit = vqe_core.build_density_matrix_circuit(dev, ansatz, depth)
+
     # running the VQE protocol and printing the final energy
     energy_threshold = molecule_config["ground_state"] * config.THRESHOLD_SCALAR
-    protocol = FixedKProtocol(training_cost, full_cost, config.LEARNING_RATE, config.MAX_STEPS, energy_threshold, k=4)
+    protocol = FixedKProtocol(training_cost, full_cost, config.LEARNING_RATE, config.MAX_STEPS, energy_threshold, k=4,
+                              density_matrix_circuit=density_matrix_circuit, qubits=qubits)
     results = protocol.run(theta)
 
     print(f"Final energy for {molecule_name}: {results["final_energy"]:.8f} Ha")

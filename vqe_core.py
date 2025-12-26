@@ -154,3 +154,19 @@ def locality_filter(hamiltonian, k):
         return 0.0 * qml.Identity(hamiltonian.wires[0])
 
     return qml.sum(*filtered_terms)
+
+def build_density_matrix_circuit(dev, ansatz, depth):
+    """
+    Builds a quantum circuit that returns the density matrix of the ansatz state.
+    
+    :param dev: The quantum device used for the circuit.
+    :param ansatz: The ansatz used in the circuit.
+    :param depth: The depth of the ansatz circuit.
+    """
+
+    @qml.qnode(dev)
+    def density_matrix_circuit(params):
+        ansatz(params, depth)
+        return qml.density_matrix(wires=dev.wires)
+    
+    return density_matrix_circuit
