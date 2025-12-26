@@ -31,12 +31,13 @@ def get_hf_state(electrons, qubits):
 
     return qchem.hf_state(electrons=electrons, orbitals=qubits)
 
-def build_ansatz(hf_state, qubits):
+def build_ansatz(hf_state, qubits, noise_params=None):
     """
     Builds the ansatz for the VQE algorithm.
     
     :param hf_state: The Hartree-Fock state of the system.
     :param qubits: The number of qubits in the system.
+    :param noise_params: Dictionary containing noise model parameters.
     """
 
     def ansatz(params, depth):
@@ -47,10 +48,33 @@ def build_ansatz(hf_state, qubits):
             for q in range(qubits):
                 qml.RY(params[param_idx], wires=q)
                 param_idx += 1
+
+                if noise_params:
+                    if noise_params.get("depolarizing_1q", 0.0) > 0.0:
+                        qml.DepolarizingChannel(noise_params["depolarizing_1q"], wires=q)
+                    if noise_params.get("amplitude", 0.0) > 0.0:
+                        qml.AmplitudeDamping(noise_params["amplitude"], wires=q)
+                    if noise_params.get("phase", 0.0) > 0.0:
+                        qml.PhaseDamping(noise_params["phase"], wires=q)
+
                 qml.RZ(params[param_idx], wires=q)
                 param_idx += 1
+
+                if noise_params:
+                    if noise_params.get("depolarizing_1q", 0.0) > 0.0:
+                        qml.DepolarizingChannel(noise_params["depolarizing_1q"], wires=q)
+                    if noise_params.get("amplitude", 0.0) > 0.0:
+                        qml.AmplitudeDamping(noise_params["amplitude"], wires=q)
+                    if noise_params.get("phase", 0.0) > 0.0:
+                        qml.PhaseDamping(noise_params["phase"], wires=q)
+
             for q in range(qubits - 1):
                 qml.CNOT(wires=[q, q + 1])
+
+                if noise_params:
+                    if noise_params.get("depolarizing_2q", 0.0) > 0.0:
+                        qml.DepolarizingChannel(noise_params["depolarizing_2q"], wires=q)
+                        qml.DepolarizingChannel(noise_params["depolarizing_2q"], wires=q+1)
 
     return ansatz
 

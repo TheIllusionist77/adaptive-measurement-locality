@@ -14,7 +14,7 @@ def main():
     hf_state = vqe_core.get_hf_state(molecule_config["electrons"], qubits)
 
     # setting up the quantum device and calculating the Hartree-Fock energy
-    dev = qml.device("default.qubit", wires=qubits)
+    dev = qml.device("default.mixed", wires=qubits)
 
     @qml.set_shots(config.SHOTS_PER_STEP)
     @qml.qnode(dev)
@@ -26,7 +26,7 @@ def main():
     print(f"Target energy for {molecule_name}: {molecule_config["ground_state"]} Ha")
 
     # running the VQE protocol to find the ground state energy
-    ansatz = vqe_core.build_ansatz(hf_state, qubits)
+    ansatz = vqe_core.build_ansatz(hf_state, qubits, noise_params=config.NOISE_PARAMS)
     depth = config.DEPTHS[0]
 
     # building the cost functions and initializing the parameters

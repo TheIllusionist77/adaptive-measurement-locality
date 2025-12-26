@@ -1,3 +1,23 @@
+# defining VQE configuration parameters
+SHOTS_PER_STEP = 4096
+SEED = 42
+DEPTHS = [4]
+INIT_SCALE = 0.01
+CONVERGENCE_WINDOW = 5
+THRESHOLD_SCALAR = 0.99
+
+# defining optimizer parameters
+MAX_STEPS = 1000
+LEARNING_RATE = 0.4
+
+# defining noise model parameters
+NOISE_PARAMS = {
+    "depolarizing_1q": 0.0001,
+    "depolarizing_2q": 0.001,
+    "amplitude": 0.00005,
+    "phase": 0.0001
+}
+
 # defining the molecules and their properties
 MOLECULES = {
     "H2": {
@@ -25,13 +45,3 @@ MOLECULES = {
         "active_orbitals": None
     }
 }
-
-# defining the parameters for the VQE algorithm
-SHOTS_PER_STEP = 4096
-SEED = 42
-DEPTHS = [4]
-INIT_SCALE = 0.01
-LEARNING_RATE = 0.4
-MAX_STEPS = 100
-CONVERGENCE_WINDOW = 5
-THRESHOLD_SCALAR = 0.999
