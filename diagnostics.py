@@ -1,6 +1,7 @@
 # importing necessary libraries
 import pennylane as qml
 from pennylane import numpy as np
+import config
 
 def compute_subsystem_entropies(density_matrix, total_qubits):
     """
@@ -34,35 +35,26 @@ def compute_diagnostics(grad, density_matrix, total_qubits):
 
     entropies = compute_subsystem_entropies(density_matrix, total_qubits)
 
-    gradient_norm = float(np.linalg.norm(grad))
-    gradient_std = float(np.std(grad))
+    gradient_mean = float(np.mean(np.abs(grad)))
+    gradient_std = 1.0 / np.sqrt(config.SHOTS_PER_STEP)
 
     if gradient_std > 1e-10:
-        gradient_snr = gradient_norm / gradient_std
+        gradient_snr = gradient_mean / gradient_std
     else:
-        gradient_snr = float("inf") if gradient_norm > 1e-10 else 0.0
+        gradient_snr = float("inf") if gradient_mean > 1e-10 else 0.0
 
     diagnostics = {
         "gradient_snr": gradient_snr,
-        "gradient_norm": gradient_norm,
-        "gradient_std": gradient_std,
-        "gradient_max": float(np.max(np.abs(grad))),
-        "subsystem_entropies": entropies,
-        "avg_entropy": float(np.mean(list(entropies.values()))),
-        "max_entropy": float(np.max(list(entropies.values())))
+        "avg_entropy": float(np.mean(list(entropies.values())))
     }
 
     return diagnostics
 
-def get_diagnostics(data, step):
+def get_diagnostics(data):
     """
     Formats diagnostics information for logging.
     
     :param data: The dictionary containing diagnostics data.
-    :param step: The current optimization step.
     """
 
-    return (f"[Diagnostics] SNR = {data["gradient_snr"]:.2f}, "
-            f"Grad Norm: {data["gradient_norm"]:.6f}, "
-            f"Grad Std: {data["gradient_std"]:.6f}, "
-            f"Avg Entropy: {data["avg_entropy"]:.3f}")
+    return (f"[Diagnostics] SNR = {data["gradient_snr"]:.2f}, Avg Entropy: {data["avg_entropy"]:.3f}")

@@ -1,72 +1,47 @@
 # importing necessary libraries
 import pennylane as qml
-import time, config, diagnostics
+import time, config, diagnostics, vqe_core
 
 class GlobalProtocol:
-    """
-    A global protocol for optimizing quantum circuits.
-    """
+    """A global protocol for optimizing quantum circuits."""
 
-    def __init__(self, training_cost, full_cost, learning_rate, max_steps, energy_threshold,
-                 density_matrix_circuit=None, qubits=None):
+    def __init__(self, dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits):
         """
         Initialize the global protocol with the given parameters.
         
-        :param training_cost: The cost function used for training.
-        :param full_cost: The full cost function used for evaluation.
-        :param learning_rate: The learning rate for the optimizer.
-        :param max_steps: The maximum number of steps for the optimization.
+        :param dev: The quantum device used for the VQE algorithm.
+        :param hamiltonian: The hamiltonian of the system.
+        :param ansatz: The ansatz used in the VQE algorithm.
+        :param depth: The depth of the ansatz circuit.
         :param energy_threshold: The energy threshold for convergence.
         :param density_matrix_circuit: The density matrix circuit for diagnostics.
         :param qubits: The number of qubits in the system.
         """
-
-        self.training_cost = training_cost
-        self.full_cost = full_cost
-        self.optimizer = qml.GradientDescentOptimizer(stepsize=learning_rate)
-        self.max_steps = max_steps
+        
+        self.dev = dev
+        self.hamiltonian = hamiltonian
+        self.ansatz = ansatz
+        self.depth = depth
         self.energy_threshold = energy_threshold
-        self.convergence_window = config.CONVERGENCE_WINDOW
         self.density_matrix_circuit = density_matrix_circuit
         self.qubits = qubits
+        self.k = qubits
 
-    def get_step_info(self, step, train_energy, full_energy):
+        self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth)
+        self.full_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth)
+
+    def get_step_info(self, log, data):
         """
         Get string representation of the current step information.
         
-        :param step: Current step number.
-        :param train_energy: Training energy at the current step.
-        :param full_energy: Full energy at the current step.
+        :param log: Log dictionary to store data.
+        :param data: The dictionary containing diagnostics data.
         """
 
-        return f"Step {step}: Training Energy = {train_energy:.8f} Ha, Full Energy = {full_energy:.8f} Ha"
+        print(f"Step {log["step"][-1]} (k={self.k}): Training Energy = {log["train_energy"][-1]:.8f} Ha, Full Energy = {log["full_energy"][-1]:.8f} Ha")
+        print(diagnostics.get_diagnostics(data) + f", Shots Used = {log["shots_used"][-1]}, Time = {round(log["wall_time"][-1], 3)}s")
 
-    def initialize_log(self):
-        """
-        Initialize the log dictionary to store optimization data.
-        """
-
-        log = {
-            "step": [],
-            "training_energy": [],
-            "full_energy": [],
-            "shots_used": [],
-            "wall_time": []
-        }
-
-        if self.density_matrix_circuit:
-            log.update({
-                "gradient_snr": [],
-                "gradient_norm": [],
-                "gradient_std": [],
-                "gradient_max": [],
-                "avg_entropy": [],
-                "max_entropy": []
-            })
-        
-        return log
-    
-    def log_step(self, log, step, train_energy, full_energy, shots_used, wall_time, data=None):
+    def log_step(self, log, step, train_energy, full_energy, shots_used, wall_time, data):
         """
         Log the data for the current step.
         
@@ -79,143 +54,142 @@ class GlobalProtocol:
         :param data: Diagnostics data for the current step.
         """
 
+        total_shots = log["shots_used"][-1] + shots_used if log["shots_used"] else shots_used
+        total_time = log["wall_time"][-1] + wall_time if log["wall_time"] else wall_time
+
         log["step"].append(step)
-        log["training_energy"].append(train_energy)
+        log["train_energy"].append(train_energy)
         log["full_energy"].append(full_energy)
-        log["shots_used"].append(shots_used)
-        log["wall_time"].append(wall_time)
+        log["shots_used"].append(total_shots)
+        log["wall_time"].append(total_time)
+        log["gradient_snr"].append(data["gradient_snr"])
+        log["avg_entropy"].append(data["avg_entropy"])
+        log["locality_k"].append(self.k)
 
-        if data:
-            log["gradient_snr"].append(data["gradient_snr"])
-            log["gradient_norm"].append(data["gradient_norm"])
-            log["gradient_std"].append(data["gradient_std"])
-            log["gradient_max"].append(data["gradient_max"])
-            log["avg_entropy"].append(data["avg_entropy"])
-            log["max_entropy"].append(data["max_entropy"])
+    def adjust_k(self, data):
+        """Subclasses may override to adjust k based on diagnostics."""
+        pass
 
-    def get_final_results(self, theta, log, converged):
-        """
-        Get the final results after optimization.
-
-        :param theta: Final parameters after optimization.
-        :param log: Log dictionary containing optimization data.
-        :param converged: Boolean indicating whether the optimization converged.
-        """
-
-        total_shots = sum(log["shots_used"])
-        total_time = sum(log["wall_time"])
-
-        return {
-            "final_params": theta,
-            "log": log,
-            "final_energy": log["full_energy"][-1],
-            "steps": len(log["step"]) - 1,
-            "converged": converged,
-            "total_shots": total_shots,
-            "total_time": total_time
-        }
-
-    def run(self, init_params):
+    def run(self, theta):
         """
         Run the protocol to optimize the quantum circuit parameters.
         
-        :param init_params: Initial parameters for the quantum circuit.
+        :param theta: Initial parameters for the quantum circuit.
         """
 
-        # initialize parameters and log
-        theta = init_params.copy()
-        log = self.initialize_log()
-
-        step_start = time.time()
-        initial_train = self.training_cost(theta)
-        initial_full = self.full_cost(theta)
-
-        if self.density_matrix_circuit:
-            grad = qml.grad(self.training_cost)(theta)
-            density_matrix = self.density_matrix_circuit(theta)
-            data = diagnostics.compute_diagnostics(grad, density_matrix, self.qubits)
-            self.log_step(log, 0, initial_train, initial_full, 2 * config.SHOTS_PER_STEP, time.time() - step_start, data)
-            print(self.get_step_info(0, initial_train, initial_full))
-            print(diagnostics.get_diagnostics(data, 0))
-        else:
-            self.log_step(log, 0, initial_train, initial_full, 2 * config.SHOTS_PER_STEP, time.time() - step_start)
-            print(self.get_step_info(0, initial_train, initial_full))
+        # initialize gradient function and log
+        grad_fn = qml.grad(self.training_cost)
+        log = {
+            "step": [],
+            "train_energy": [],
+            "full_energy": [],
+            "shots_used": [],
+            "wall_time": [],
+            "gradient_snr": [],
+            "avg_entropy": [],
+            "locality_k": []
+        }
 
         # optimization loop
-        converged = False
-        for step in range(1, self.max_steps + 1):
+        for step in range(1, config.MAX_STEPS + 1):
             step_start = time.time()
-            theta, train_energy = self.optimizer.step_and_cost(self.training_cost, theta)
-            full_energy = self.full_cost(theta)
 
-            if self.density_matrix_circuit:
-                grad = qml.grad(self.training_cost)(theta)
+            with qml.Tracker(self.dev) as tracker:
+                train_energy = self.training_cost(theta)
+                full_energy = self.full_cost(theta)
+                
+                grad = grad_fn(theta)
                 density_matrix = self.density_matrix_circuit(theta)
-                data = diagnostics.compute_diagnostics(grad, density_matrix, self.qubits)
-                self.log_step(log, step, train_energy, full_energy, 2 * config.SHOTS_PER_STEP, time.time() - step_start, data)
-                print(self.get_step_info(step, train_energy, full_energy))
-                print(diagnostics.get_diagnostics(data, step))
-            else:
-                self.log_step(log, step, train_energy, full_energy, 2 * config.SHOTS_PER_STEP, time.time() - step_start)
-                print(self.get_step_info(step, train_energy, full_energy))
+                theta = theta - config.LEARNING_RATE * grad
 
-            if step >= self.convergence_window:
-                recent_energies = log["full_energy"][-self.convergence_window:]
+            data = diagnostics.compute_diagnostics(grad, density_matrix, self.qubits)
+            self.log_step(log, step, train_energy, full_energy, tracker.totals.get("shots"), time.time() - step_start, data)
+            self.get_step_info(log, data)
+
+            # adjust k based on diagnostics, if needed
+            changed = self.adjust_k(data)
+            if changed:
+                grad_fn = qml.grad(self.training_cost)
+
+            if step >= config.CONVERGENCE_WINDOW:
+                recent_energies = log["full_energy"][-config.CONVERGENCE_WINDOW:]
                 avg_energy = sum(recent_energies) / len(recent_energies)
                 
                 if avg_energy < self.energy_threshold:
                     print(f"Converged at step {step}!")
-                    converged = True
                     break
         
-        return self.get_final_results(theta, log, converged)
-    
-class FixedKProtocol(GlobalProtocol):
-    """
-    A fixed-k protocol for optimizing quantum circuits.
-    """
+        return log
 
-    def __init__(self, training_cost, full_cost, learning_rate, max_steps, energy_threshold, k,
-                 density_matrix_circuit=None, qubits=None):
+class FixedKProtocol(GlobalProtocol):
+    """A fixed-k protocol for optimizing quantum circuits."""
+
+    def __init__(self, dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits, k):
         """
-        Initialize the fixed-k protocol with the given parameters.
+        Override to initialize the fixed-k protocol with the given parameters.
         
         :param k: The fixed locality parameter.
         """
 
-        super().__init__(training_cost, full_cost, learning_rate, max_steps, energy_threshold,
-                         density_matrix_circuit, qubits)
+        super().__init__(dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits)
+        self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth, k)
         self.k = k
-
-    def get_step_info(self, step, train_energy, full_energy):
-        """
-        Override to include k in the step info.
-        """
-
-        return f"Step {step} (k={self.k}): Training Energy = {train_energy:.8f} Ha, Full Energy = {full_energy:.8f} Ha"
     
-    def initialize_log(self):
+class AdaptiveProtocol(GlobalProtocol):
+    """An adaptive protocol that adjusts k during optimization based on diagnostics."""
+
+    def __init__(self, dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits):
+        """Override to initialize the adaptive protocol with the given parameters."""
+
+        super().__init__(dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits)
+        self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth, 1)
+        self.k = 1
+        self.escalation_counter = 0
+        self.deescalation_counter = 0
+
+    def adjust_k(self, data):
         """
-        Override to include k in the log.
+        Override to determine whether to escalate, deescalate, or maintain k based on diagnostics.
+        
+        :param data: Diagnostics data for the current step.
         """
 
-        log = super().initialize_log()
-        log["k"] = []
-        return log
-    
-    def log_step(self, log, step, train_energy, full_energy, shots_used, wall_time, data=None):
-        """
-        Override to log k in each step.
-        """
+        gradient_snr = data["gradient_snr"]
+        entropy = data["avg_entropy"]
 
-        super().log_step(log, step, train_energy, full_energy, shots_used, wall_time, data)
-        log["k"].append(self.k)
-    
-    def get_final_results(self, theta, log, converged):
-        """
-        Override to include k in final results.
-        """
+        snr_raise = gradient_snr >= config.ESCALATION_THRESHOLDS.get("gradient_snr")
+        entropy_raise = entropy <= config.ESCALATION_THRESHOLDS.get("avg_entropy")
+        snr_lower = gradient_snr <= config.DEESCALATION_THRESHOLDS.get("gradient_snr")
+        entropy_lower = entropy >= config.DEESCALATION_THRESHOLDS.get("avg_entropy")
 
-        results = super().get_final_results(theta, log, converged)
-        results["k"] = self.k
-        return results
+        raise_condition = snr_raise and entropy_raise and self.k < self.qubits
+        lower_condition = (snr_lower or entropy_lower) and self.k > 1
+        changed = False
+
+        if raise_condition:
+            self.escalation_counter += 1
+            self.deescalation_counter = 0
+
+            if self.escalation_counter >= config.HYSTERESIS:
+                self.k += 1
+                changed = True
+
+                self.escalation_counter = 0
+                self.training_cost = vqe_core.build_cost_function(self.dev, self.hamiltonian, self.ansatz, self.depth, k=self.k)
+                print(f"[Locality] k escalated from {self.k - 1} to {self.k}.")
+        elif lower_condition:
+            self.deescalation_counter += 1
+            self.escalation_counter = 0
+
+            if self.deescalation_counter >= config.HYSTERESIS:
+                self.k -= 1
+                changed = True
+                
+                self.deescalation_counter = 0
+                self.training_cost = vqe_core.build_cost_function(self.dev, self.hamiltonian, self.ansatz, self.depth, k=self.k)
+                print(f"[Locality] k deescalated from {self.k + 1} to {self.k}.")
+        else:
+            self.escalation_counter = 0
+            self.deescalation_counter = 0
+
+        return changed

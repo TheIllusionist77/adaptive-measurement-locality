@@ -131,7 +131,7 @@ def get_pauli_weight(observable):
     elif isinstance(observable, qml.ops.op_math.Prod):
         return sum(get_pauli_weight(op) for op in observable.operands)
     else:
-        return 0
+        raise ValueError("Unknown Pauli operator type!")
 
 def locality_filter(hamiltonian, k):
     """

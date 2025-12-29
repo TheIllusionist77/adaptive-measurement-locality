@@ -1,5 +1,5 @@
 # defining VQE configuration parameters
-SHOTS_PER_STEP = 4096
+SHOTS_PER_STEP = 1024
 SEED = 42
 DEPTHS = [4]
 INIT_SCALE = 0.01
@@ -7,8 +7,13 @@ CONVERGENCE_WINDOW = 5
 THRESHOLD_SCALAR = 0.99
 
 # defining optimizer parameters
-MAX_STEPS = 1000
-LEARNING_RATE = 0.4
+MAX_STEPS = 200
+LEARNING_RATE = 0.1
+
+# defining adaptive protocol parameters
+HYSTERESIS = 2
+ESCALATION_THRESHOLDS = {"gradient_snr": 1.0, "avg_entropy": 1.0}
+DEESCALATION_THRESHOLDS = {"gradient_snr": 0.25, "avg_entropy": 1.5}
 
 # defining noise model parameters
 NOISE_PARAMS = {
