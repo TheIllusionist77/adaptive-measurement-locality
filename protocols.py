@@ -95,14 +95,15 @@ class GlobalProtocol:
 
             with qml.Tracker(self.dev) as tracker:
                 shadow_data = self.shadow_circuit(theta)
+                entropies = diagnostics.compute_subsystem_entropies(shadow_data, self.qubits)
+
                 train_energy = self.training_cost(theta)
                 full_energy = self.full_cost(theta)
                 
                 grad = self.grad_fn(theta)
-                entropies = diagnostics.compute_subsystem_entropies(shadow_data, self.qubits)
+                data = diagnostics.compute_diagnostics(grad, entropies)
                 theta = theta - config.LEARNING_RATE * grad
 
-            data = diagnostics.compute_diagnostics(grad, entropies)
             self.log_step(log, step, train_energy, full_energy, tracker.totals.get("shots"), time.time() - step_start, data)
             self.get_step_info(log, data)
 
@@ -175,7 +176,6 @@ class AdaptiveProtocol(GlobalProtocol):
 
         raise_condition = snr_raise and entropy_raise and self.k < self.qubits
         lower_condition = (snr_lower or entropy_lower) and self.k > 1
-        changed = False
 
         if raise_condition:
             self.escalation_counter += 1
