@@ -5,7 +5,7 @@ import time, config, diagnostics, vqe_core
 class GlobalProtocol:
     """A global protocol for optimizing quantum circuits."""
 
-    def __init__(self, dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits):
+    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits):
         """
         Initialize the global protocol with the given parameters.
         
@@ -13,8 +13,7 @@ class GlobalProtocol:
         :param hamiltonian: The hamiltonian of the system.
         :param ansatz: The ansatz used in the VQE algorithm.
         :param depth: The depth of the ansatz circuit.
-        :param energy_threshold: The energy threshold for convergence.
-        :param density_matrix_circuit: The density matrix circuit for diagnostics.
+        :param ground_state: The ground state energy of the molecule.
         :param qubits: The number of qubits in the system.
         """
         
@@ -22,13 +21,14 @@ class GlobalProtocol:
         self.hamiltonian = hamiltonian
         self.ansatz = ansatz
         self.depth = depth
-        self.energy_threshold = energy_threshold
-        self.density_matrix_circuit = density_matrix_circuit
+        self.ground_state = ground_state
         self.qubits = qubits
         self.k = qubits
 
         self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth)
         self.full_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth)
+        self.grad_fn = qml.grad(self.training_cost)
+        self.shadow_circuit = vqe_core.build_shadow_circuit(dev, ansatz, depth)
 
     def get_step_info(self, log, data):
         """
@@ -77,8 +77,7 @@ class GlobalProtocol:
         :param theta: Initial parameters for the quantum circuit.
         """
 
-        # initialize gradient function and log
-        grad_fn = qml.grad(self.training_cost)
+        # initialize log dictionary
         log = {
             "step": [],
             "train_energy": [],
@@ -95,27 +94,37 @@ class GlobalProtocol:
             step_start = time.time()
 
             with qml.Tracker(self.dev) as tracker:
+                shadow_data = self.shadow_circuit(theta)
                 train_energy = self.training_cost(theta)
                 full_energy = self.full_cost(theta)
                 
-                grad = grad_fn(theta)
-                density_matrix = self.density_matrix_circuit(theta)
+                grad = self.grad_fn(theta)
+                entropies = diagnostics.compute_subsystem_entropies(shadow_data, self.qubits)
                 theta = theta - config.LEARNING_RATE * grad
 
-            data = diagnostics.compute_diagnostics(grad, density_matrix, self.qubits)
+            data = diagnostics.compute_diagnostics(grad, entropies)
             self.log_step(log, step, train_energy, full_energy, tracker.totals.get("shots"), time.time() - step_start, data)
             self.get_step_info(log, data)
 
             # adjust k based on diagnostics, if needed
-            changed = self.adjust_k(data)
-            if changed:
-                grad_fn = qml.grad(self.training_cost)
+            old_k = self.k
+            self.adjust_k(data)
+
+            if old_k != self.k:
+                self.training_cost = vqe_core.build_cost_function(self.dev, self.hamiltonian, self.ansatz, self.depth, self.k)
+                self.grad_fn = qml.grad(self.training_cost)
+
+                modification = "deescalated" if old_k > self.k else "escalated"
+                print(f"[Locality] k {modification} from {old_k} to {self.k}.")
 
             if step >= config.CONVERGENCE_WINDOW:
                 recent_energies = log["full_energy"][-config.CONVERGENCE_WINDOW:]
                 avg_energy = sum(recent_energies) / len(recent_energies)
+
+                lower_bound = self.ground_state
+                upper_bound = self.ground_state / config.ENERGY_THRESHOLD
                 
-                if avg_energy < self.energy_threshold:
+                if lower_bound <= avg_energy <= upper_bound:
                     print(f"Converged at step {step}!")
                     break
         
@@ -124,28 +133,30 @@ class GlobalProtocol:
 class FixedKProtocol(GlobalProtocol):
     """A fixed-k protocol for optimizing quantum circuits."""
 
-    def __init__(self, dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits, k):
+    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits, k):
         """
         Override to initialize the fixed-k protocol with the given parameters.
         
         :param k: The fixed locality parameter.
         """
 
-        super().__init__(dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits)
-        self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth, k)
+        super().__init__(dev, hamiltonian, ansatz, depth, ground_state, qubits)
         self.k = k
+        self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth, k)
+        self.grad_fn = qml.grad(self.training_cost)
     
 class AdaptiveProtocol(GlobalProtocol):
     """An adaptive protocol that adjusts k during optimization based on diagnostics."""
 
-    def __init__(self, dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits):
+    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits):
         """Override to initialize the adaptive protocol with the given parameters."""
 
-        super().__init__(dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits)
-        self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth, 1)
+        super().__init__(dev, hamiltonian, ansatz, depth, ground_state, qubits)
         self.k = 1
         self.escalation_counter = 0
         self.deescalation_counter = 0
+        self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth, self.k)
+        self.grad_fn = qml.grad(self.training_cost)
 
     def adjust_k(self, data):
         """
@@ -172,24 +183,14 @@ class AdaptiveProtocol(GlobalProtocol):
 
             if self.escalation_counter >= config.HYSTERESIS:
                 self.k += 1
-                changed = True
-
                 self.escalation_counter = 0
-                self.training_cost = vqe_core.build_cost_function(self.dev, self.hamiltonian, self.ansatz, self.depth, k=self.k)
-                print(f"[Locality] k escalated from {self.k - 1} to {self.k}.")
         elif lower_condition:
             self.deescalation_counter += 1
             self.escalation_counter = 0
 
             if self.deescalation_counter >= config.HYSTERESIS:
                 self.k -= 1
-                changed = True
-                
                 self.deescalation_counter = 0
-                self.training_cost = vqe_core.build_cost_function(self.dev, self.hamiltonian, self.ansatz, self.depth, k=self.k)
-                print(f"[Locality] k deescalated from {self.k + 1} to {self.k}.")
         else:
             self.escalation_counter = 0
             self.deescalation_counter = 0
-
-        return changed

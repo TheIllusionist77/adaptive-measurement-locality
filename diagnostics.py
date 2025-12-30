@@ -3,45 +3,37 @@ import pennylane as qml
 from pennylane import numpy as np
 import config
 
-def compute_subsystem_entropies(density_matrix, total_qubits):
+def compute_subsystem_entropies(shadow_data, total_qubits):
     """
-    Computes the Rényi-2 entropies for all adjacent two-qubit subsystems.
+    Computes the Rényi-2 entropies for all adjacent two-qubit subsystems using classical shadows.
     
-    :param density_matrix: The full density matrix.
+    :param shadow_data: The classical shadow data.
     :param total_qubits: Total number of qubits in the system.
     """
 
+    bits, recipes = shadow_data
+    shadow = qml.ClassicalShadow(bits, recipes)
     entropies = {}
 
     for i in range(total_qubits - 1):
         subsystem = (i, i + 1)
-        rho = qml.math.reduce_dm(density_matrix, indices=list(subsystem))
 
-        purity = np.trace(rho @ rho).real
-        purity = np.clip(purity, 0.0, 1.0)
-
-        entropies[subsystem] = -np.log2(purity)
-
+        entropy_value = shadow.entropy(wires=list(subsystem), alpha=2, base=2)
+        entropies[subsystem] = float(entropy_value)
+    
     return entropies
 
-def compute_diagnostics(grad, density_matrix, total_qubits):
+def compute_diagnostics(grad, entropies):
     """
     Computes various diagnostics for the optimization process.
     
     :param grad: The gradient array.
-    :param density_matrix: The full density matrix.
-    :param total_qubits: Total number of qubits in the system.
+    :param entropies: The dictionary of subsystem entropies.
     """
 
-    entropies = compute_subsystem_entropies(density_matrix, total_qubits)
-
     gradient_mean = float(np.mean(np.abs(grad)))
-    gradient_std = 1.0 / np.sqrt(config.SHOTS_PER_STEP)
-
-    if gradient_std > 1e-10:
-        gradient_snr = gradient_mean / gradient_std
-    else:
-        gradient_snr = float("inf") if gradient_mean > 1e-10 else 0.0
+    gradient_std = 1.0 / np.sqrt(config.GRAD_SHOTS)
+    gradient_snr = gradient_mean / gradient_std
 
     diagnostics = {
         "gradient_snr": gradient_snr,

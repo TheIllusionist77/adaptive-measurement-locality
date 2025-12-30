@@ -21,16 +21,6 @@ def build_hamiltonian(molecule_config):
 
     return hamiltonian, qubits
 
-def get_hf_state(electrons, qubits):
-    """
-    Generates the Hartree-Fock (HF) state for a given number of electrons and qubits.
-
-    :param electrons: The number of electrons in the system.
-    :param qubits: The number of qubits required for the system.
-    """
-
-    return qchem.hf_state(electrons=electrons, orbitals=qubits)
-
 def build_ansatz(hf_state, qubits, noise_params=None):
     """
     Builds the ansatz for the VQE algorithm.
@@ -89,12 +79,9 @@ def build_cost_function(dev, hamiltonian, ansatz, depth, k=None):
     :param k: The locality parameter for the hamiltonian.
     """
 
-    if k is not None:
-        observable = locality_filter(hamiltonian, k)
-    else:
-        observable = hamiltonian
+    observable = locality_filter(hamiltonian, k) if k else hamiltonian
 
-    @qml.set_shots(config.SHOTS_PER_STEP)
+    @qml.set_shots(config.GRAD_SHOTS)
     @qml.qnode(dev)
     def cost_function(params):
         ansatz(params, depth)
@@ -155,18 +142,19 @@ def locality_filter(hamiltonian, k):
 
     return qml.sum(*filtered_terms)
 
-def build_density_matrix_circuit(dev, ansatz, depth):
+def build_shadow_circuit(dev, ansatz, depth):
     """
-    Builds a quantum circuit that returns the density matrix of the ansatz state.
+    Builds a quantum circuit that returns the classical shadow measurements.
     
     :param dev: The quantum device used for the circuit.
     :param ansatz: The ansatz used in the circuit.
     :param depth: The depth of the ansatz circuit.
     """
 
+    @qml.set_shots(config.SHADOW_SHOTS)
     @qml.qnode(dev)
-    def density_matrix_circuit(params):
+    def shadow_circuit(params):
         ansatz(params, depth)
-        return qml.density_matrix(wires=dev.wires)
-    
-    return density_matrix_circuit
+        return qml.classical_shadow(wires=dev.wires)
+
+    return shadow_circuit

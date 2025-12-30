@@ -1,6 +1,7 @@
 # importing necessary libraries
 import pennylane as qml
 import config, vqe_core
+from pennylane import qchem
 from protocols import *
 
 # defining the main function to run the VQE protocol
@@ -11,12 +12,12 @@ def main():
 
     # building the Hamiltonian and the Hartree-Fock state
     hamiltonian, qubits = vqe_core.build_hamiltonian(molecule_config)
-    hf_state = vqe_core.get_hf_state(molecule_config["electrons"], qubits)
+    hf_state = qchem.hf_state(molecule_config["electrons"], qubits)
 
     # setting up the quantum device and calculating the Hartree-Fock energy
     dev = qml.device("default.mixed", wires=qubits)
 
-    @qml.set_shots(config.SHOTS_PER_STEP)
+    @qml.set_shots(config.GRAD_SHOTS)
     @qml.qnode(dev)
     def hf_energy():
         qml.BasisState(hf_state, wires=range(qubits))
@@ -31,11 +32,9 @@ def main():
 
     # initializing the parameters
     theta = vqe_core.initialize_params(depth, qubits, config.SEED, config.INIT_SCALE)
-    density_matrix_circuit = vqe_core.build_density_matrix_circuit(dev, ansatz, depth)
 
     # running the VQE protocol and printing the final energy
-    energy_threshold = molecule_config["ground_state"] * config.THRESHOLD_SCALAR
-    protocol = AdaptiveProtocol(dev, hamiltonian, ansatz, depth, energy_threshold, density_matrix_circuit, qubits)
+    protocol = AdaptiveProtocol(dev, hamiltonian, ansatz, depth, molecule_config["ground_state"], qubits)
     log = protocol.run(theta)
 
     print(f"Final energy for {molecule_name}: {log["full_energy"][-1]:.8f} Ha")
