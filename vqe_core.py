@@ -89,20 +89,19 @@ def build_cost_function(dev, hamiltonian, ansatz, depth, k=None):
 
     return cost_function
 
-def initialize_params(depth, qubits, seed, init_scale):
+def initialize_params(depth, qubits, seed):
     """
     Initializes the parameters for the VQE algorithm.
     
     :param depth: The depth of the ansatz circuit.
     :param qubits: The number of qubits in the system.
     :param seed: The seed for the random number generator.
-    :param init_scale: The scale factor for the initial parameters.
     """
 
     np.random.seed(seed)
     num_params = depth * qubits * 2
 
-    return np.random.randn(num_params) * init_scale
+    return np.random.randn(num_params) * config.INIT_SCALE
 
 def get_pauli_weight(observable):
     """

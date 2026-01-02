@@ -5,7 +5,7 @@ import time, config, diagnostics, vqe_core
 class GlobalProtocol:
     """A global protocol for optimizing quantum circuits."""
 
-    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits):
+    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits, verbose=False):
         """
         Initialize the global protocol with the given parameters.
         
@@ -15,6 +15,7 @@ class GlobalProtocol:
         :param depth: The depth of the ansatz circuit.
         :param ground_state: The ground state energy of the molecule.
         :param qubits: The number of qubits in the system.
+        :param verbose: Whether to print progress information.
         """
         
         self.dev = dev
@@ -24,28 +25,39 @@ class GlobalProtocol:
         self.ground_state = ground_state
         self.qubits = qubits
         self.k = qubits
+        self.verbose = verbose
 
         self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth)
         self.full_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth)
         self.grad_fn = qml.grad(self.training_cost)
         self.shadow_circuit = vqe_core.build_shadow_circuit(dev, ansatz, depth)
 
-    def get_step_info(self, log, data):
+        self.log = {
+            "step": [],
+            "train_energy": [],
+            "full_energy": [],
+            "shots_used": [],
+            "wall_time": [],
+            "gradient_snr": [],
+            "avg_entropy": [],
+            "locality_k": []
+        }
+
+    def get_step_info(self, data):
         """
         Get string representation of the current step information.
         
-        :param log: Log dictionary to store data.
         :param data: The dictionary containing diagnostics data.
         """
 
-        print(f"Step {log["step"][-1]} (k={self.k}): Training Energy = {log["train_energy"][-1]:.8f} Ha, Full Energy = {log["full_energy"][-1]:.8f} Ha")
-        print(diagnostics.get_diagnostics(data) + f", Shots Used = {log["shots_used"][-1]}, Time = {round(log["wall_time"][-1], 3)}s")
+        if self.verbose:
+            print(f"Step {self.log["step"][-1]} (k={self.k}): Training Energy = {self.log["train_energy"][-1]:.8f} Ha, Full Energy = {self.log["full_energy"][-1]:.8f} Ha")
+            print(diagnostics.get_diagnostics(data) + f", Shots Used = {self.log["shots_used"][-1]}, Time = {round(self.log["wall_time"][-1], 3)}s")
 
-    def log_step(self, log, step, train_energy, full_energy, shots_used, wall_time, data):
+    def log_step(self, step, train_energy, full_energy, shots_used, wall_time, data):
         """
         Log the data for the current step.
         
-        :param log: Log dictionary to store data.
         :param step: Current step number.
         :param train_energy: Training energy at the current step.
         :param full_energy: Full energy at the current step.
@@ -54,17 +66,17 @@ class GlobalProtocol:
         :param data: Diagnostics data for the current step.
         """
 
-        total_shots = log["shots_used"][-1] + shots_used if log["shots_used"] else shots_used
-        total_time = log["wall_time"][-1] + wall_time if log["wall_time"] else wall_time
+        total_shots = self.log["shots_used"][-1] + shots_used if self.log["shots_used"] else shots_used
+        total_time = self.log["wall_time"][-1] + wall_time if self.log["wall_time"] else wall_time
 
-        log["step"].append(step)
-        log["train_energy"].append(train_energy)
-        log["full_energy"].append(full_energy)
-        log["shots_used"].append(total_shots)
-        log["wall_time"].append(total_time)
-        log["gradient_snr"].append(data["gradient_snr"])
-        log["avg_entropy"].append(data["avg_entropy"])
-        log["locality_k"].append(self.k)
+        self.log["step"].append(step)
+        self.log["train_energy"].append(train_energy)
+        self.log["full_energy"].append(full_energy)
+        self.log["shots_used"].append(total_shots)
+        self.log["wall_time"].append(total_time)
+        self.log["gradient_snr"].append(data["gradient_snr"])
+        self.log["avg_entropy"].append(data["avg_entropy"])
+        self.log["locality_k"].append(self.k)
 
     def adjust_k(self, data):
         """Subclasses may override to adjust k based on diagnostics."""
@@ -76,18 +88,6 @@ class GlobalProtocol:
         
         :param theta: Initial parameters for the quantum circuit.
         """
-
-        # initialize log dictionary
-        log = {
-            "step": [],
-            "train_energy": [],
-            "full_energy": [],
-            "shots_used": [],
-            "wall_time": [],
-            "gradient_snr": [],
-            "avg_entropy": [],
-            "locality_k": []
-        }
 
         # optimization loop
         for step in range(1, config.MAX_STEPS + 1):
@@ -104,8 +104,8 @@ class GlobalProtocol:
                 data = diagnostics.compute_diagnostics(grad, entropies)
                 theta = theta - config.LEARNING_RATE * grad
 
-            self.log_step(log, step, train_energy, full_energy, tracker.totals.get("shots"), time.time() - step_start, data)
-            self.get_step_info(log, data)
+            self.log_step(step, train_energy, full_energy, tracker.totals.get("shots"), time.time() - step_start, data)
+            self.get_step_info(data)
 
             # adjust k based on diagnostics, if needed
             old_k = self.k
@@ -115,33 +115,35 @@ class GlobalProtocol:
                 self.training_cost = vqe_core.build_cost_function(self.dev, self.hamiltonian, self.ansatz, self.depth, self.k)
                 self.grad_fn = qml.grad(self.training_cost)
 
-                modification = "deescalated" if old_k > self.k else "escalated"
-                print(f"[Locality] k {modification} from {old_k} to {self.k}.")
+                if self.verbose:
+                    modification = "deescalated" if old_k > self.k else "escalated"
+                    print(f"[Locality] k {modification} from {old_k} to {self.k}.")
 
             if step >= config.CONVERGENCE_WINDOW:
-                recent_energies = log["full_energy"][-config.CONVERGENCE_WINDOW:]
+                recent_energies = self.log["full_energy"][-config.CONVERGENCE_WINDOW:]
                 avg_energy = sum(recent_energies) / len(recent_energies)
 
                 lower_bound = self.ground_state
                 upper_bound = self.ground_state / config.ENERGY_THRESHOLD
                 
                 if lower_bound <= avg_energy <= upper_bound:
-                    print(f"Converged at step {step}!")
+                    if self.verbose:
+                        print(f"Converged at step {step}!")
                     break
         
-        return log
+        return self.log
 
 class FixedKProtocol(GlobalProtocol):
     """A fixed-k protocol for optimizing quantum circuits."""
 
-    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits, k):
+    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits, k, verbose=False):
         """
         Override to initialize the fixed-k protocol with the given parameters.
         
         :param k: The fixed locality parameter.
         """
 
-        super().__init__(dev, hamiltonian, ansatz, depth, ground_state, qubits)
+        super().__init__(dev, hamiltonian, ansatz, depth, ground_state, qubits, verbose)
         self.k = k
         self.training_cost = vqe_core.build_cost_function(dev, hamiltonian, ansatz, depth, k)
         self.grad_fn = qml.grad(self.training_cost)
@@ -149,10 +151,10 @@ class FixedKProtocol(GlobalProtocol):
 class AdaptiveProtocol(GlobalProtocol):
     """An adaptive protocol that adjusts k during optimization based on diagnostics."""
 
-    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits):
+    def __init__(self, dev, hamiltonian, ansatz, depth, ground_state, qubits, verbose=False):
         """Override to initialize the adaptive protocol with the given parameters."""
 
-        super().__init__(dev, hamiltonian, ansatz, depth, ground_state, qubits)
+        super().__init__(dev, hamiltonian, ansatz, depth, ground_state, qubits, verbose)
         self.k = 1
         self.escalation_counter = 0
         self.deescalation_counter = 0
