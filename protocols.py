@@ -1,6 +1,8 @@
 # importing necessary libraries
 import pennylane as qml
-import time, config, diagnostics, vqe_core
+import time
+import config, diagnostics, vqe_core
+from pennylane import numpy as np
 
 class GlobalProtocol:
     """A global protocol for optimizing quantum circuits."""
@@ -94,7 +96,15 @@ class GlobalProtocol:
             step_start = time.time()
 
             with qml.Tracker(self.dev) as tracker:
-                shadow_data = self.shadow_circuit(theta)
+                bits_list = []
+                recipes_list = []
+
+                for _ in range(config.SHADOW_CHUNKS):
+                    bits, recipes = self.shadow_circuit(theta)
+                    bits_list.append(bits)
+                    recipes_list.append(recipes)
+
+                shadow_data = (np.vstack(bits_list), np.vstack(recipes_list))
                 entropies = diagnostics.compute_subsystem_entropies(shadow_data, self.qubits)
 
                 train_energy = self.training_cost(theta)
@@ -123,8 +133,8 @@ class GlobalProtocol:
                 recent_energies = self.log["full_energy"][-config.CONVERGENCE_WINDOW:]
                 avg_energy = sum(recent_energies) / len(recent_energies)
 
-                lower_bound = self.ground_state
-                upper_bound = self.ground_state / config.ENERGY_THRESHOLD
+                lower_bound = self.ground_state - config.ENERGY_THRESHOLD
+                upper_bound = self.ground_state + config.ENERGY_THRESHOLD
                 
                 if lower_bound <= avg_energy <= upper_bound:
                     if self.verbose:

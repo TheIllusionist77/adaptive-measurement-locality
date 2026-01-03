@@ -1,8 +1,8 @@
 # importing necessary libraries
 import pennylane as qml
+import config
 from pennylane import numpy as np
 from pennylane import qchem
-import config
 
 def build_hamiltonian(molecule_config):
     """
@@ -30,6 +30,12 @@ def build_ansatz(hf_state, qubits, noise_params=None):
     :param noise_params: Dictionary containing noise model parameters.
     """
 
+    def apply_noise(wires):
+        if noise_params:
+            p_dep = noise_params["dep_1q"] if len(wires) == 1 else noise_params["dep_2q"]
+            for w in wires:
+                qml.DepolarizingChannel(p_dep, wires=w)
+
     def ansatz(params, depth):
         qml.BasisState(hf_state, wires=range(qubits))
 
@@ -38,33 +44,16 @@ def build_ansatz(hf_state, qubits, noise_params=None):
             for q in range(qubits):
                 qml.RY(params[param_idx], wires=q)
                 param_idx += 1
-
-                if noise_params:
-                    if noise_params.get("depolarizing_1q", 0.0) > 0.0:
-                        qml.DepolarizingChannel(noise_params["depolarizing_1q"], wires=q)
-                    if noise_params.get("amplitude", 0.0) > 0.0:
-                        qml.AmplitudeDamping(noise_params["amplitude"], wires=q)
-                    if noise_params.get("phase", 0.0) > 0.0:
-                        qml.PhaseDamping(noise_params["phase"], wires=q)
+                apply_noise([q])
 
                 qml.RZ(params[param_idx], wires=q)
                 param_idx += 1
-
-                if noise_params:
-                    if noise_params.get("depolarizing_1q", 0.0) > 0.0:
-                        qml.DepolarizingChannel(noise_params["depolarizing_1q"], wires=q)
-                    if noise_params.get("amplitude", 0.0) > 0.0:
-                        qml.AmplitudeDamping(noise_params["amplitude"], wires=q)
-                    if noise_params.get("phase", 0.0) > 0.0:
-                        qml.PhaseDamping(noise_params["phase"], wires=q)
+                apply_noise([q])
 
             for q in range(qubits - 1):
-                qml.CNOT(wires=[q, q + 1])
-
-                if noise_params:
-                    if noise_params.get("depolarizing_2q", 0.0) > 0.0:
-                        qml.DepolarizingChannel(noise_params["depolarizing_2q"], wires=q)
-                        qml.DepolarizingChannel(noise_params["depolarizing_2q"], wires=q+1)
+                qml.IsingZZ(params[param_idx], wires=[q, q+1])
+                param_idx += 1
+                apply_noise([q, q+1])
 
     return ansatz
 
@@ -99,7 +88,7 @@ def initialize_params(depth, qubits, seed):
     """
 
     np.random.seed(seed)
-    num_params = depth * qubits * 2
+    num_params = depth * (3 * qubits - 1)
 
     return np.random.randn(num_params) * config.INIT_SCALE
 
@@ -150,7 +139,7 @@ def build_shadow_circuit(dev, ansatz, depth):
     :param depth: The depth of the ansatz circuit.
     """
 
-    @qml.set_shots(config.SHADOW_SHOTS)
+    @qml.set_shots(int(config.SHADOW_SHOTS / config.SHADOW_CHUNKS))
     @qml.qnode(dev)
     def shadow_circuit(params):
         ansatz(params, depth)

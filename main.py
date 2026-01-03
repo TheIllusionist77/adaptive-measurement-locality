@@ -40,18 +40,12 @@ def check_completed_experiments():
     """Generates a list of all experiment configurations already completed."""
 
     completed = set()
-    if not os.path.exists(config.OUTPUT_DIR):
-        return completed
+    json_path = os.path.join(config.OUTPUT_DIR, "metadata.json")
     
-    for exp_id in os.listdir(config.OUTPUT_DIR):
-        path = os.path.join(config.OUTPUT_DIR, exp_id)
-
-        if os.path.isdir(path):
-            csv_exists = os.path.exists(os.path.join(path, "log.csv"))
-            json_exists = os.path.exists(os.path.join(path, "metadata.json"))
-            
-            if csv_exists and json_exists:
-                completed.add(exp_id)
+    if os.path.exists(json_path):
+        with open(json_path, "r") as file:
+            metadata = json.load(file)
+            completed = set(metadata.keys())
 
     return completed
 
@@ -76,15 +70,8 @@ def run_experiment(exp_config):
     hamiltonian, qubits = vqe_core.build_hamiltonian(molecule_config)
     hf_state = qchem.hf_state(molecule_config["electrons"], qubits)
 
-    # setting up the quantum device and calculating the Hartree-Fock energy
+    # setting up the quantum device
     dev = qml.device("default.mixed" if config.USE_NOISE else "default.qubit", wires=qubits)
-
-    @qml.qnode(dev)
-    def hf_energy():
-        qml.BasisState(hf_state, wires=range(qubits))
-        return qml.expval(hamiltonian)
-    
-    hf_energy_value = hf_energy()
 
     # building the ansatz and initializing parameters
     ansatz = vqe_core.build_ansatz(hf_state, qubits, config.NOISE_PARAMS if config.USE_NOISE else None)
@@ -113,10 +100,11 @@ def run_experiment(exp_config):
             "protocol": protocol_config,
             "seed": seed,
             "qubits": qubits,
-            "hf_energy": float(hf_energy_value),
             "target_energy": molecule_config["ground_state"],
             "final_energy": float(log["full_energy"][-1]),
-            "total_steps": int(len(log["step"])),
+            "total_steps": log["step"][-1],
+            "total_shots": log["shots_used"][-1],
+            "total_time": log["wall_time"][-1],
             "converged": bool(len(log["step"]) < config.MAX_STEPS),
             "time": datetime.now().isoformat()
         }
@@ -124,24 +112,38 @@ def run_experiment(exp_config):
 
     return result
 
-def save_results(result):
+def save_results(result, lock):
     """
     Saves experiment results to disk.
     
     :param result: Dictionary containing experimental results.
+    :param lock: Multiprocessing lock for thread-safe file writing.
     """
     
+    # extract experiment IDs and define the output directory
     exp_id = result["exp_id"]
-    exp_dir = os.path.join(config.OUTPUT_DIR, exp_id)
-    os.makedirs(exp_dir, exist_ok=True)
+    logs_dir = os.path.join(config.OUTPUT_DIR, "logs")
 
+    # create the output directories, if needed
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+    os.makedirs(logs_dir, exist_ok=True)
+    
     # save experiment log as .csv
     log_df = pd.DataFrame(result["log"])
-    log_df.to_csv(os.path.join(exp_dir, "log.csv"), index=False)
+    log_df.to_csv(os.path.join(logs_dir, f"{exp_id}_log.csv"), index=False)
 
     # save experiment metadata as .json
-    with open(os.path.join(exp_dir, "metadata.json"), "w") as file:
-        json.dump(result["metadata"], file, indent=2)
+    json_path = os.path.join(config.OUTPUT_DIR, "metadata.json")
+    with lock:
+        if os.path.exists(json_path):
+            with open(json_path, "r") as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
+        
+        metadata[exp_id] = result["metadata"]
+        with open(json_path, "w") as file:
+            json.dump(metadata, file, indent=4)
 
 def main():
     """Main function to conduct all experiments across multiple cores."""
@@ -160,10 +162,13 @@ def main():
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     print(f"Running {len(remaining)} experiments on {config.NUM_CORES} cores...")
 
+    manager = multiprocessing.Manager()
+    lock = manager.Lock()
+
     with multiprocessing.Pool(config.NUM_CORES) as pool:
         with tqdm(total=len(remaining), desc="Overall Progress", position=0) as pbar:
             for result in pool.imap_unordered(run_experiment, remaining):
-                save_results(result)
+                save_results(result, lock)
                 pbar.set_postfix({
                     "Last": result["exp_id"][:30],
                     "Energy": f"{result["metadata"]["final_energy"]:.5f}"
