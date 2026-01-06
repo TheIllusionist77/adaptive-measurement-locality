@@ -1,7 +1,8 @@
 # importing necessary libraries
 import pennylane as qml
+import numpy as np
+import jax
 import config
-from pennylane import numpy as np
 from pennylane import qchem
 
 def build_hamiltonian(molecule_config):
@@ -42,6 +43,10 @@ def build_ansatz(hf_state, qubits, noise_params=None):
         param_idx = 0
         for d in range(depth):
             for q in range(qubits):
+                qml.RX(params[param_idx], wires=q)
+                param_idx += 1
+                apply_noise([q])
+
                 qml.RY(params[param_idx], wires=q)
                 param_idx += 1
                 apply_noise([q])
@@ -50,10 +55,10 @@ def build_ansatz(hf_state, qubits, noise_params=None):
                 param_idx += 1
                 apply_noise([q])
 
-            for q in range(qubits - 1):
-                qml.IsingZZ(params[param_idx], wires=[q, q+1])
+            for q in range(qubits):
+                qml.IsingZZ(params[param_idx], wires=[q, (q+1) % qubits])
                 param_idx += 1
-                apply_noise([q, q+1])
+                apply_noise([q, (q+1) % qubits])
 
     return ansatz
 
@@ -71,7 +76,7 @@ def build_cost_function(dev, hamiltonian, ansatz, depth, k=None):
     observable = locality_filter(hamiltonian, k) if k else hamiltonian
 
     @qml.set_shots(config.GRAD_SHOTS)
-    @qml.qnode(dev)
+    @qml.qnode(dev, cache=False, interface="jax")
     def cost_function(params):
         ansatz(params, depth)
         return qml.expval(observable)
@@ -87,10 +92,10 @@ def initialize_params(depth, qubits, seed):
     :param seed: The seed for the random number generator.
     """
 
-    np.random.seed(seed)
-    num_params = depth * (3 * qubits - 1)
+    key = jax.random.PRNGKey(seed)
+    num_params = depth * qubits * 4
 
-    return np.random.randn(num_params) * config.INIT_SCALE
+    return jax.random.normal(key, (num_params,)) * config.INIT_SCALE
 
 def get_pauli_weight(observable):
     """
@@ -129,20 +134,3 @@ def locality_filter(hamiltonian, k):
         return 0.0 * qml.Identity(hamiltonian.wires[0])
 
     return qml.sum(*filtered_terms)
-
-def build_shadow_circuit(dev, ansatz, depth):
-    """
-    Builds a quantum circuit that returns the classical shadow measurements.
-    
-    :param dev: The quantum device used for the circuit.
-    :param ansatz: The ansatz used in the circuit.
-    :param depth: The depth of the ansatz circuit.
-    """
-
-    @qml.set_shots(int(config.SHADOW_SHOTS / config.SHADOW_CHUNKS))
-    @qml.qnode(dev)
-    def shadow_circuit(params):
-        ansatz(params, depth)
-        return qml.classical_shadow(wires=dev.wires)
-
-    return shadow_circuit

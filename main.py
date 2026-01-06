@@ -1,12 +1,23 @@
 # importing necessary libraries
 import pennylane as qml
 import pandas as pd
-import os, json, multiprocessing
+import os, json, multiprocessing, random
 import config, vqe_core
 from pennylane import qchem
 from tqdm import tqdm
 from datetime import datetime
 from protocols import *
+
+def init_worker(tqdm_lock):
+    """
+    Initializes a multiprocessing worker with a unique ID and tqdm lock.
+    
+    :param tqdm_lock: Multiprocessing lock for thread-safe progress updates.
+    """
+
+    global WORKER_ID
+    WORKER_ID = multiprocessing.current_process()._identity[0]
+    tqdm.set_lock(tqdm_lock)
 
 def generate_experiment_queue():
     """Generates a list of all experiment configurations to run."""
@@ -34,6 +45,7 @@ def generate_experiment_queue():
 
                     queue.append(experiment)
     
+    random.shuffle(queue)
     return queue
 
 def check_completed_experiments():
@@ -56,6 +68,9 @@ def run_experiment(exp_config):
     :param exp_config: Dictionary containing experimental configuration.
     """
 
+    global WORKER_ID
+    worker_id = WORKER_ID
+
     # extract experiment configuration from dictionary
     exp_id = exp_config["id"]
     molecule_name = exp_config["molecule"]
@@ -68,10 +83,10 @@ def run_experiment(exp_config):
 
     # building the Hamiltonian and the Hartree-Fock state
     hamiltonian, qubits = vqe_core.build_hamiltonian(molecule_config)
-    hf_state = qchem.hf_state(molecule_config["electrons"], qubits)
+    hf_state = qchem.hf_state(molecule_config["active_electrons"], qubits)
 
     # setting up the quantum device
-    dev = qml.device("default.mixed" if config.USE_NOISE else "default.qubit", wires=qubits)
+    dev = qml.device("default.mixed" if config.USE_NOISE else "lightning.qubit", wires=qubits)
 
     # building the ansatz and initializing parameters
     ansatz = vqe_core.build_ansatz(hf_state, qubits, config.NOISE_PARAMS if config.USE_NOISE else None)
@@ -90,7 +105,11 @@ def run_experiment(exp_config):
         protocol = GlobalProtocol(dev, hamiltonian, ansatz, depth,
                                   molecule_config["ground_state"], qubits)
         
-    log = protocol.run(theta)
+    BAR_FORMAT = "{desc}{percentage:6.1f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+    with tqdm(total=config.MAX_STEPS, desc=f"Process {worker_id:03d}: {exp_id}".ljust(40),
+              bar_format=BAR_FORMAT, position=worker_id, leave=False, dynamic_ncols=True) as pbar:
+        log, final_avg_energy = protocol.run(theta, progress_cb=lambda n: pbar.update(n))
+        
     result = {
         "exp_id": exp_id,
         "log": log,
@@ -101,7 +120,7 @@ def run_experiment(exp_config):
             "seed": seed,
             "qubits": qubits,
             "target_energy": molecule_config["ground_state"],
-            "final_energy": float(log["full_energy"][-1]),
+            "final_avg_energy": final_avg_energy,
             "total_steps": log["step"][-1],
             "total_shots": log["shots_used"][-1],
             "total_time": log["wall_time"][-1],
@@ -162,17 +181,14 @@ def main():
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     print(f"Running {len(remaining)} experiments on {config.NUM_CORES} cores...")
 
-    manager = multiprocessing.Manager()
-    lock = manager.Lock()
+    file_lock = multiprocessing.Lock()
+    tqdm_lock = multiprocessing.RLock()
 
-    with multiprocessing.Pool(config.NUM_CORES) as pool:
+    with multiprocessing.Pool(config.NUM_CORES, init_worker, (tqdm_lock,), maxtasksperchild=1) as pool:
         with tqdm(total=len(remaining), desc="Overall Progress", position=0) as pbar:
             for result in pool.imap_unordered(run_experiment, remaining):
-                save_results(result, lock)
-                pbar.set_postfix({
-                    "Last": result["exp_id"][:30],
-                    "Energy": f"{result["metadata"]["final_energy"]:.5f}"
-                })
+                save_results(result, file_lock)
+                pbar.set_postfix({"Last": result["exp_id"]})
                 pbar.update(1)
 
 if __name__ == "__main__":

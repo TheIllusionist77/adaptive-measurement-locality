@@ -16,12 +16,12 @@ def run_experiment():
     # get molecule configuration
     molecule_config = config.MOLECULES[molecule_name]
 
-    # build Hamiltonian and Hartree-Fock state
+    # building the Hamiltonian and the Hartree-Fock state
     hamiltonian, qubits = vqe_core.build_hamiltonian(molecule_config)
-    hf_state = qchem.hf_state(molecule_config["electrons"], qubits)
+    hf_state = qchem.hf_state(molecule_config["active_electrons"], qubits)
 
     # setting up the quantum device and calculating the Hartree-Fock energy
-    dev = qml.device("default.mixed" if config.USE_NOISE else "default.qubit", wires=qubits)
+    dev = qml.device("default.mixed" if config.USE_NOISE else "lightning.qubit", wires=qubits)
 
     @qml.qnode(dev)
     def hf_energy():
@@ -48,7 +48,8 @@ def run_experiment():
         protocol = GlobalProtocol(dev, hamiltonian, ansatz, depth,
                                   molecule_config["ground_state"], qubits, verbose=True)
         
-    protocol.run(theta)
+    log, final_avg_energy, = protocol.run(theta)
+    print(f"Final average energy for {molecule_name}: {final_avg_energy:.5f} Ha!")
 
 if __name__ == "__main__":
     run_experiment()

@@ -1,6 +1,13 @@
+# importing necessary libraries
+import jax
+import jax.numpy as jnp
+
+# enabling 64-bit precision for jax
+jax.config.update("jax_enable_x64", True)
+
 # defining experiment configuration
 EXPERIMENT_CONFIG = {
-    "molecules": ["LiH_R8", "LiH"],
+    "molecules": ["LiH_R8", "BeH2_R8"],
     "protocols": [
         {"type": "adaptive"},
         {"type": "fixed", "k": 1},
@@ -17,20 +24,22 @@ NUM_CORES = 10
 
 # defining VQE configuration parameters
 GRAD_SHOTS = 1024
-SHADOW_SHOTS = 4096
-SHADOW_CHUNKS = 32
-INIT_SCALE = 0.01
-CONVERGENCE_WINDOW = 10
-ENERGY_THRESHOLD = 0.01
+INIT_SCALE = jnp.pi * 2
+CONVERGENCE_WINDOW = 20
+ENERGY_THRESHOLD = 0.008
+FINAL_AVG_ENERGY_WINDOW = 10
+IMPROVEMENT_STEPS = 5
 
 # defining optimizer parameters
-MAX_STEPS = 200
+MAX_STEPS = 500
 LEARNING_RATE = 0.1
 
 # defining adaptive protocol parameters
-HYSTERESIS = 2
-ESCALATION_THRESHOLDS = {"gradient_snr": 0.9, "avg_entropy": 0.6}
-DEESCALATION_THRESHOLDS = {"gradient_snr": 0.3, "avg_entropy": 1.2}
+HYSTERESIS = 3
+EMA_ALPHA = 0.5
+VAR_THRESHOLD = 5e-3
+ALIGN_THRESHOLD = 0.5
+IMPROVEMENT_THRESHOLD = -0.2
 
 # defining noise model parameters
 USE_NOISE = False
@@ -45,16 +54,32 @@ MOLECULES = {
         "symbols": ["Li", "H"],
         "coordinates": [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5949]],
         "electrons": 4,
-        "ground_state": -7.863844828435112,
+        "ground_state": -7.8620,
         "active_electrons": 2,
+        "active_orbitals": 4
+    },
+    "BeH2_R8": {
+        "symbols": ["Be", "H", "H"],
+        "coordinates": [[0.0, 0.0, 0.0], [0.0, 0.0, 1.3264], [0.0, 0.0, -1.3264]],
+        "electrons": 6,
+        "ground_state": -15.5603,
+        "active_electrons": 4,
         "active_orbitals": 4
     },
     "LiH": {
         "symbols": ["Li", "H"],
         "coordinates": [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5949]],
         "electrons": 4,
-        "ground_state": -7.882403424686215,
-        "active_electrons": None,
-        "active_orbitals": None
+        "ground_state": -7.8620,
+        "active_electrons": 4,
+        "active_orbitals": 6
+    },
+    "BeH2_R12": {
+        "symbols": ["Be", "H", "H"],
+        "coordinates": [[0.0, 0.0, 0.0], [0.0, 0.0, 1.3264], [0.0, 0.0, -1.3264]],
+        "electrons": 6,
+        "ground_state": -15.5603,
+        "active_electrons": 6,
+        "active_orbitals": 6
     }
 }

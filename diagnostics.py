@@ -1,43 +1,36 @@
 # importing necessary libraries
-import pennylane as qml
-from pennylane import numpy as np
 import config
+import jax.numpy as jnp
 
-def compute_subsystem_entropies(shadow_data, total_qubits):
-    """
-    Computes the Rényi-2 entropies for all adjacent two-qubit subsystems using classical shadows.
-    
-    :param shadow_data: The classical shadow data.
-    :param total_qubits: Total number of qubits in the system.
-    """
-
-    bits, recipes = shadow_data
-    shadow = qml.ClassicalShadow(bits, recipes)
-    entropies = {}
-
-    for i in range(total_qubits - 1):
-        subsystem = (i, i + 1)
-
-        entropy_value = shadow.entropy(wires=list(subsystem), alpha=2, base=2)
-        entropies[subsystem] = float(entropy_value)
-    
-    return entropies
-
-def compute_diagnostics(grad, entropies):
+def compute_diagnostics(grad, curr_train, curr_full, prev_train, prev_full, align_ema):
     """
     Computes various diagnostics for the optimization process.
     
-    :param grad: The gradient array.
-    :param entropies: The dictionary of subsystem entropies.
+    :param grad: The current step's gradient array.
+    :param curr_train: The current step's training energy.
+    :param curr_full: The current step's full energy.
+    :param prev_train: The previous step's training energy.
+    :param prev_full: The previous step's full energy.
+    :param align_ema: The previous step's gradient alignment value.
     """
 
-    gradient_mean = float(np.mean(np.abs(grad)))
-    gradient_std = 1.0 / np.sqrt(config.GRAD_SHOTS)
-    gradient_snr = gradient_mean / gradient_std
+    grad_var = float(jnp.var(grad))
+    delta_full = 0.0
+
+    if prev_train is not None and prev_full is not None:
+        delta_train = curr_train - prev_train
+        delta_full = curr_full - prev_full
+        
+        if abs(delta_train) >= 1e-4:
+            grad_align = float(delta_full / delta_train)
+            align_ema = (1 - config.EMA_ALPHA) * align_ema + config.EMA_ALPHA * grad_align
+        else:
+            align_ema *= 1 - config.EMA_ALPHA
 
     diagnostics = {
-        "gradient_snr": gradient_snr,
-        "avg_entropy": float(np.mean(list(entropies.values())))
+        "grad_var": grad_var,
+        "grad_align": align_ema,
+        "improvement": delta_full
     }
 
     return diagnostics
@@ -49,4 +42,4 @@ def get_diagnostics(data):
     :param data: The dictionary containing diagnostics data.
     """
 
-    return (f"[Diagnostics] SNR = {data["gradient_snr"]:.2f}, Avg Entropy: {data["avg_entropy"]:.3f}")
+    return f"   Grad Var = {data["grad_var"]:.6f}, Grad Align = {data["grad_align"]:.2f}, Improvement = {data["improvement"]:.4f} Ha"
