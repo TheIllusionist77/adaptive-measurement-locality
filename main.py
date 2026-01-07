@@ -28,9 +28,12 @@ def generate_experiment_queue():
             for protocol_config in config.EXPERIMENT_CONFIG["protocols"]:
                 for seed in config.EXPERIMENT_CONFIG["seeds"]:
                     protocol_type = protocol_config["type"]
+                    qubits = config.MOLECULES[molecule_name]["active_orbitals"] * 2
 
                     if protocol_type == "fixed":
                         k = protocol_config["k"]
+                        if k >= qubits:
+                            continue
                         exp_id = f"{molecule_name}_d{depth}_{protocol_type}_k{k}_seed{seed}"
                     else:
                         exp_id = f"{molecule_name}_d{depth}_{protocol_type}_seed{seed}"
@@ -105,7 +108,7 @@ def run_experiment(exp_config):
         protocol = GlobalProtocol(dev, hamiltonian, ansatz, depth,
                                   molecule_config["ground_state"], qubits)
         
-    BAR_FORMAT = "{desc}{percentage:6.1f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+    BAR_FORMAT = "{desc}{percentage:8.1f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
     with tqdm(total=config.MAX_STEPS, desc=f"Process {worker_id:03d}: {exp_id}".ljust(40),
               bar_format=BAR_FORMAT, position=worker_id, leave=False, dynamic_ncols=True) as pbar:
         log, final_avg_energy = protocol.run(theta, progress_cb=lambda n: pbar.update(n))

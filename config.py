@@ -14,10 +14,13 @@ EXPERIMENT_CONFIG = {
         {"type": "fixed", "k": 2},
         {"type": "fixed", "k": 3},
         {"type": "fixed", "k": 4},
+        {"type": "fixed", "k": 5},
+        {"type": "fixed", "k": 6},
+        {"type": "fixed", "k": 7},
         {"type": "global"}
     ],
     "seeds": [42],
-    "depths": [2, 4, 6, 8]
+    "depths": [1, 2, 3, 4, 5, 6, 7, 8]
 }
 OUTPUT_DIR = "results"
 NUM_CORES = 10
@@ -25,9 +28,8 @@ NUM_CORES = 10
 # defining VQE configuration parameters
 GRAD_SHOTS = 1024
 INIT_SCALE = jnp.pi * 2
-CONVERGENCE_WINDOW = 20
+CONVERGENCE_WINDOW = 10
 ENERGY_THRESHOLD = 0.008
-FINAL_AVG_ENERGY_WINDOW = 10
 IMPROVEMENT_STEPS = 5
 
 # defining optimizer parameters

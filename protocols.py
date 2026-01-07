@@ -153,7 +153,7 @@ class GlobalProtocol:
                         progress_cb(config.MAX_STEPS - step)
                     break
         
-        recent_energies = self.log["full_energy"][-config.FINAL_AVG_ENERGY_WINDOW:]
+        recent_energies = self.log["full_energy"][-config.CONVERGENCE_WINDOW:]
         final_avg_energy = sum(recent_energies) / len(recent_energies)
         
         return self.log, final_avg_energy
@@ -192,7 +192,7 @@ class AdaptiveProtocol(GlobalProtocol):
         grad_var = self.log["grad_var"][-1]
         grad_align = self.log["grad_align"][-1]
         improvement = jnp.array(self.log["improvement"][-config.IMPROVEMENT_STEPS:])
-        step_bias = self.log["step"][-1] / config.CONVERGENCE_WINDOW
+        step_bias = self.log["step"][-1] / (config.CONVERGENCE_WINDOW * 2)
         
         improving = jnp.mean(improvement) / jnp.mean(jnp.abs(improvement)) <= config.IMPROVEMENT_THRESHOLD
         raise_condition = grad_align <= config.ALIGN_THRESHOLD and not improving
