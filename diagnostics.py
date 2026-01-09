@@ -21,8 +21,8 @@ def compute_diagnostics(grad, curr_train, curr_full, prev_train, prev_full, alig
         delta_train = curr_train - prev_train
         delta_full = curr_full - prev_full
         
-        if abs(delta_train) >= 1e-4:
-            grad_align = float(delta_full / delta_train)
+        if abs(delta_train) >= 1e-10:
+            grad_align = jnp.clip(delta_full / delta_train, -10.0, 10.0)
             align_ema = (1 - config.EMA_ALPHA) * align_ema + config.EMA_ALPHA * grad_align
         else:
             align_ema *= 1 - config.EMA_ALPHA

@@ -1,8 +1,5 @@
-# importing necessary libraries
-import jax
-import jax.numpy as jnp
-
 # enabling 64-bit precision for jax
+import jax
 jax.config.update("jax_enable_x64", True)
 
 # defining experiment configuration
@@ -27,19 +24,18 @@ NUM_CORES = 10
 
 # defining VQE configuration parameters
 GRAD_SHOTS = 1024
-INIT_SCALE = jnp.pi * 2
 CONVERGENCE_WINDOW = 10
-ENERGY_THRESHOLD = 0.008
+ENERGY_THRESHOLD = 0.0016
 IMPROVEMENT_STEPS = 5
 
 # defining optimizer parameters
-MAX_STEPS = 500
+MAX_STEPS = 1000
 LEARNING_RATE = 0.1
 
 # defining adaptive protocol parameters
 HYSTERESIS = 3
 EMA_ALPHA = 0.5
-VAR_THRESHOLD = 5e-3
+VAR_THRESHOLD = 1e-4
 ALIGN_THRESHOLD = 0.5
 IMPROVEMENT_THRESHOLD = -0.2
 

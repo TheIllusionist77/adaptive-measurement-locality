@@ -95,7 +95,7 @@ def initialize_params(depth, qubits, seed):
     key = jax.random.PRNGKey(seed)
     num_params = depth * qubits * 4
 
-    return jax.random.normal(key, (num_params,)) * config.INIT_SCALE
+    return jax.random.normal(key, (num_params,)) * np.pi * 2
 
 def get_pauli_weight(observable):
     """

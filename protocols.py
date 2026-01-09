@@ -43,7 +43,7 @@ class GlobalProtocol:
             "grad_var": [],
             "grad_align": [],
             "improvement": [],
-            "locality_k": []
+            "k": []
         }
 
     def get_step_info(self, data):
@@ -80,7 +80,7 @@ class GlobalProtocol:
         self.log["grad_var"].append(float(data["grad_var"]))
         self.log["grad_align"].append(float(data["grad_align"]))
         self.log["improvement"].append(float(data["improvement"]))
-        self.log["locality_k"].append(self.k)
+        self.log["k"].append(self.k)
 
     def adjust_k(self):
         """Subclasses may override to adjust k based on diagnostics."""
@@ -192,11 +192,12 @@ class AdaptiveProtocol(GlobalProtocol):
         grad_var = self.log["grad_var"][-1]
         grad_align = self.log["grad_align"][-1]
         improvement = jnp.array(self.log["improvement"][-config.IMPROVEMENT_STEPS:])
+
         step_bias = self.log["step"][-1] / (config.CONVERGENCE_WINDOW * 2)
-        
-        improving = jnp.mean(improvement) / jnp.mean(jnp.abs(improvement)) <= config.IMPROVEMENT_THRESHOLD
-        raise_condition = grad_align <= config.ALIGN_THRESHOLD and not improving
-        lower_condition = grad_var <= (config.VAR_THRESHOLD / (2 ** (step_bias))) and not improving
+        k_delta = max(0, int(jnp.max(jnp.array(self.log["k"]))) - self.k)
+
+        raise_condition = grad_align <= config.ALIGN_THRESHOLD and jnp.mean(improvement) / jnp.mean(jnp.abs(improvement)) > config.IMPROVEMENT_THRESHOLD
+        lower_condition = grad_var <= config.VAR_THRESHOLD and jnp.mean(improvement) / jnp.mean(jnp.abs(improvement)) > (config.IMPROVEMENT_THRESHOLD * self.k)
 
         if raise_condition:
             self.escalation_counter += 1
@@ -208,11 +209,11 @@ class AdaptiveProtocol(GlobalProtocol):
         else:
             self.deescalation_counter = 0
 
-        if self.escalation_counter >= (config.HYSTERESIS + self.k ** 2) and self.k < self.qubits:
+        if self.escalation_counter >= (config.HYSTERESIS + self.k ** 2 - k_delta) and self.k < self.qubits:
             self.k += 1
             self.escalation_counter = 0
             self.deescalation_counter = 0
-        elif self.deescalation_counter >= (config.HYSTERESIS + step_bias) and self.k > 1:
+        elif self.deescalation_counter >= (config.HYSTERESIS + step_bias + k_delta) and self.k > 1:
             self.k -= 1
             self.escalation_counter = 0
             self.deescalation_counter = 0
