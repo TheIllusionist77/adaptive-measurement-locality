@@ -209,11 +209,11 @@ class AdaptiveProtocol(GlobalProtocol):
         else:
             self.deescalation_counter = 0
 
-        if self.escalation_counter >= (config.HYSTERESIS + self.k ** 2 - k_delta) and self.k < self.qubits:
+        if self.escalation_counter >= (config.BASE_HYSTERESIS + self.k ** 2 - k_delta + self.qubits) and self.k < self.qubits:
             self.k += 1
             self.escalation_counter = 0
             self.deescalation_counter = 0
-        elif self.deescalation_counter >= (config.HYSTERESIS + step_bias + k_delta) and self.k > 1:
+        elif self.deescalation_counter >= (config.BASE_HYSTERESIS + step_bias + k_delta + self.qubits) and self.k > 1:
             self.k -= 1
             self.escalation_counter = 0
             self.deescalation_counter = 0

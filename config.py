@@ -16,11 +16,12 @@ EXPERIMENT_CONFIG = {
         {"type": "fixed", "k": 7},
         {"type": "global"}
     ],
-    "seeds": [42],
+    "seeds": [42, 43, 44, 45, 46, 47, 48, 49, 50, 51],
     "depths": [1, 2, 3, 4, 5, 6, 7, 8]
 }
 OUTPUT_DIR = "results"
 NUM_CORES = 10
+USE_NOISE = False
 
 # defining VQE configuration parameters
 GRAD_SHOTS = 1024
@@ -33,14 +34,13 @@ MAX_STEPS = 1000
 LEARNING_RATE = 0.1
 
 # defining adaptive protocol parameters
-HYSTERESIS = 3
+BASE_HYSTERESIS = -5
 EMA_ALPHA = 0.5
 VAR_THRESHOLD = 1e-4
 ALIGN_THRESHOLD = 0.5
 IMPROVEMENT_THRESHOLD = -0.2
 
 # defining noise model parameters
-USE_NOISE = False
 NOISE_PARAMS = {
     "dep_1q": 0.001,
     "dep_2q": 0.01,

@@ -29,14 +29,15 @@ def generate_experiment_queue():
                 for seed in config.EXPERIMENT_CONFIG["seeds"]:
                     protocol_type = protocol_config["type"]
                     qubits = config.MOLECULES[molecule_name]["active_orbitals"] * 2
+                    noise = "noisy" if config.USE_NOISE else "noiseless"
 
                     if protocol_type == "fixed":
                         k = protocol_config["k"]
                         if k >= qubits:
                             continue
-                        exp_id = f"{molecule_name}_d{depth}_{protocol_type}_k{k}_seed{seed}"
+                        exp_id = f"{molecule_name}_d{depth}_{protocol_type}_k{k}_{noise}_seed{seed}"
                     else:
-                        exp_id = f"{molecule_name}_d{depth}_{protocol_type}_seed{seed}"
+                        exp_id = f"{molecule_name}_d{depth}_{protocol_type}_{noise}_seed{seed}"
 
                     experiment = {
                         "id": exp_id,
@@ -120,6 +121,7 @@ def run_experiment(exp_config):
             "molecule": molecule_name,
             "depth": depth,
             "protocol": protocol_config,
+            "noisy": config.USE_NOISE,
             "seed": seed,
             "qubits": qubits,
             "target_energy": molecule_config["ground_state"],
@@ -152,7 +154,7 @@ def save_results(result, lock):
     
     # save experiment log as .csv
     log_df = pd.DataFrame(result["log"])
-    log_df.to_csv(os.path.join(logs_dir, f"{exp_id}_log.csv"), index=False)
+    log_df.to_csv(os.path.join(logs_dir, f"{exp_id}.csv"), index=False)
 
     # save experiment metadata as .json
     json_path = os.path.join(config.OUTPUT_DIR, "metadata.json")
