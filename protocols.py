@@ -48,7 +48,7 @@ class GlobalProtocol:
 
     def get_step_info(self, data):
         """
-        Get string representation of the current step information.
+        Print the current step information.
         
         :param data: The dictionary containing diagnostics data.
         """
@@ -86,22 +86,56 @@ class GlobalProtocol:
         """Subclasses may override to adjust k based on diagnostics."""
         pass
 
-    def run(self, theta, progress_cb=None):
+    def load_checkpoint(self, checkpoint):
+        """
+        Loads the optimization state from a checkpoint dictionary.
+        
+        :param checkpoint: Dictionary containing checkpoint information.
+        """
+
+        self.log = checkpoint["log"]
+        self.k = checkpoint["k"]
+        
+        if hasattr(self, "escalation_counter"):
+            self.escalation_counter = checkpoint["escalation_counter"]
+            self.deescalation_counter = checkpoint["deescalation_counter"]
+
+        if self.k != self.qubits:
+            self.training_cost = vqe_core.build_cost_function(self.dev, self.hamiltonian, self.ansatz, self.depth, self.k)
+            self.grad_fn = jax.jit(jax.grad(self.training_cost))
+        
+        return (
+            checkpoint["theta"],
+            checkpoint["opt_state"],
+            checkpoint["prev_train"],
+            checkpoint["prev_full"],
+            checkpoint["align_ema"]
+        )
+
+    def run(self, theta, progress_cb=None, checkpoint=None):
         """
         Run the protocol to optimize the quantum circuit parameters.
         
         :param theta: Initial parameters for the quantum circuit.
         :param progress_cb: Callback function to increment progress bars.
+        :param checkpoint: Dictionary containing checkpoint information.
         """
 
-        # initializing various things
+        # initializing variables
         prev_train = None
         prev_full = None
         align_ema = 0.0
-        opt_state = self.optimizer.init(theta)
+        start_step = 1
+        checkpoint_steps = 0
 
-        # optimization loop
-        for step in range(1, config.MAX_STEPS + 1):
+        if checkpoint is not None:
+            theta, opt_state, prev_train, prev_full, align_ema = self.load_checkpoint(checkpoint)
+            start_step = self.log["step"][-1] + 1
+        else:
+            opt_state = self.optimizer.init(theta)
+
+        # creating optimization loop
+        for step in range(start_step, config.MAX_STEPS + 1):
             step_start = time.time()
 
             with qml.Tracker(self.dev) as tracker:
@@ -113,18 +147,19 @@ class GlobalProtocol:
                 updates, opt_state = self.optimizer.update(grad, opt_state, theta)
                 theta = optax.apply_updates(theta, updates)
 
-            # log step information and update previous parameters
-            self.log_step(step, curr_train, curr_full, tracker.totals.get("shots"), time.time() - step_start, data)
+            # logging step information and updating previous parameters
+            self.log_step(step, curr_train, curr_full, tracker.totals.get("shots", 0), time.time() - step_start, data)
             self.get_step_info(data)
 
             prev_train = curr_train
             prev_full = curr_full
             align_ema = data["grad_align"]
+            checkpoint_steps += 1
 
             if progress_cb:
                 progress_cb(1)
 
-            # adjust k based on diagnostics, if needed
+            # adjusting k based on diagnostics, if needed
             old_k = self.k
             if step > config.IMPROVEMENT_STEPS:
                 self.adjust_k()
@@ -138,7 +173,7 @@ class GlobalProtocol:
                     modification = "deescalated" if old_k > self.k else "escalated"
                     print(f"[Locality] k {modification} from {old_k} to {self.k}.")
 
-            # check if optimizer has converged
+            # checking if optimizer has converged
             if step >= config.CONVERGENCE_WINDOW:
                 recent_energies = self.log["full_energy"][-config.CONVERGENCE_WINDOW:]
                 avg_energy = sum(recent_energies) / len(recent_energies)
@@ -152,11 +187,27 @@ class GlobalProtocol:
                     if progress_cb:
                         progress_cb(config.MAX_STEPS - step)
                     break
+            
+            # checking if program should save and restart
+            if config.USE_NOISE and checkpoint_steps >= config.CHECKPOINT_STEPS and step < config.MAX_STEPS:
+                checkpoint_state = {
+                    "theta": theta,
+                    "opt_state": opt_state,
+                    "prev_train": prev_train,
+                    "prev_full": prev_full,
+                    "align_ema": align_ema,
+                    "log": self.log,
+                    "k": self.k,
+                    "escalation_counter": getattr(self, "escalation_counter", 0),
+                    "deescalation_counter": getattr(self, "deescalation_counter", 0)
+                }
+
+                return self.log, None, checkpoint_state
         
         recent_energies = self.log["full_energy"][-config.CONVERGENCE_WINDOW:]
         final_avg_energy = sum(recent_energies) / len(recent_energies)
         
-        return self.log, final_avg_energy
+        return self.log, final_avg_energy, None
 
 class FixedKProtocol(GlobalProtocol):
     """A fixed-k protocol for optimizing quantum circuits."""

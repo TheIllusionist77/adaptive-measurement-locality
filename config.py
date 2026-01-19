@@ -16,18 +16,20 @@ EXPERIMENT_CONFIG = {
         {"type": "fixed", "k": 7},
         {"type": "global"}
     ],
-    "seeds": [42, 43, 44, 45, 46, 47, 48, 49, 50, 51],
-    "depths": [1, 2, 3, 4, 5, 6, 7, 8]
+    "seeds": [42, 43, 44],
+    "depths": [4]
 }
 OUTPUT_DIR = "results"
+CHECKPOINT_DIR = "results/checkpoints"
 NUM_CORES = 10
-USE_NOISE = False
+CHECKPOINT_STEPS = 20
 
 # defining VQE configuration parameters
 GRAD_SHOTS = 1024
 CONVERGENCE_WINDOW = 10
 ENERGY_THRESHOLD = 0.0016
 IMPROVEMENT_STEPS = 5
+USE_NOISE = True
 
 # defining optimizer parameters
 MAX_STEPS = 1000
