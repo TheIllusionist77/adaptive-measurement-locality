@@ -24,7 +24,13 @@ def init_worker(tqdm_lock, position_queue):
 def generate_experiment_queue():
     """Generates a list of all experiment configurations to run."""
 
-    queue = []
+    checkpointed_experiments = []
+    new_experiments = []
+
+    existing_checkpoints = []
+    if os.path.exists(config.CHECKPOINT_DIR):
+        existing_checkpoints = [f.replace(".pkl", "") for f in os.listdir(config.CHECKPOINT_DIR) if f.endswith(".pkl")]
+    
     for molecule_name in config.EXPERIMENT_CONFIG["molecules"]:
         for depth in config.EXPERIMENT_CONFIG["depths"]:
             for protocol_config in config.EXPERIMENT_CONFIG["protocols"]:
@@ -49,10 +55,13 @@ def generate_experiment_queue():
                         "seed": seed
                     }
 
-                    queue.append(experiment)
-    
-    random.shuffle(queue)
-    return queue
+                    if exp_id in existing_checkpoints:
+                        checkpointed_experiments.append(experiment)
+                    else:
+                        new_experiments.append(experiment)
+
+    random.shuffle(new_experiments)
+    return checkpointed_experiments + new_experiments
 
 def check_completed_experiments():
     """Returns a set of all experiment configurations already completed."""
